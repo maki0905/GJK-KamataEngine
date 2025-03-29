@@ -22,7 +22,7 @@ void CalcMinkowskiPoints(const std::vector<Vector2>& meshA, const std::vector<Ve
 
 std::vector<Vector2> CnvexHull(std::vector<Vector2> vertexs);
 
-bool GJK(const std::vector<Vector2>& meshA, const std::vector<Vector2>& meshB, Vector2& penetrationVector);
+bool GJK(const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, Vector2& outNormal, float& outDepth);
 
 bool GJK(const std::vector<Vector2>& meshA, const std::vector<Vector2>& meshB);
 
@@ -32,7 +32,7 @@ bool UpdateSimplex3(Vector2& a, Vector2& b, Vector2& c);
 
 bool ContainsOrigin(std::vector<Vector2>& simplex, Vector2& direction);
 
-Vector2 EPA(const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, std::vector<Vector2>& simplex);
+void EPA(std::vector<Vector2>& simplex, const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, Vector2& outNormal, float& outDepth);
 
 Vector2 Support(const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, const Vector2& d) {
 	auto maxPoint = [](const std::vector<Vector2>& shape, const Vector2& dir) {
@@ -175,6 +175,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		supportA = GetSupport(convex0, anyDirction);
 		supportB = GetSupport(convex1, anyDirction);
 
+
 		///
 		/// ↑更新処理ここまで
 		///
@@ -199,11 +200,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		DrawTop(convex1, supportB);
 		DrawTop(minkowskiPoints, Subtract(GetSupport(convex0, anyDirction), GetSupport(convex1, Multiply(-1.0f, anyDirction))));
 
-		//Vector2 penetrationVector;
-		if (GJK(convex1, convex0)) {
+		float depth;
+		Vector2 normal;
+		if (GJK(convex1, convex0, normal, depth)) {
 			
 			Novice::DrawEllipse((int)origin.x, (int)origin.y, 3, 3, 0.0f, BLACK, kFillModeSolid);
 		}
+
+		//Novice::DrawEllipse(390, 290, 10, 10, 0.0f, BLACK, kFillModeSolid);
 
 		///
 		/// ↑描画処理ここまで
@@ -326,6 +330,45 @@ std::vector<Vector2> CnvexHull(std::vector<Vector2> vertexs)
 
 }
 
+bool GJK(const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, Vector2& outNormal, float& outDepth)
+{
+	std::vector<Vector2> simplex;
+	Vector2 direction = Vector2(1, 0);
+
+	simplex.push_back(Support(shapeA, shapeB, direction));
+	direction = -simplex[0];
+
+	while (true) {
+		Vector2 newPoint = Support(shapeA, shapeB, direction);
+
+		if (newPoint.dot(direction) < 0) {
+			return false; // 衝突なし
+		}
+
+		simplex.push_back(newPoint);
+
+		if (ContainsOrigin(simplex, direction)) {
+			Vector2 p0, p1, p2;
+			p0 = Add(simplex[0], origin);
+			p1 = Add(simplex[1], origin);
+			p2 = Add(simplex[2], origin);
+
+			Novice::DrawEllipse((int)p0.x, (int)p0.y, 3, 3, 0.0f, RED, kFillModeSolid);
+			Novice::DrawEllipse((int)p1.x, (int)p1.y, 3, 3, 0.0f, BLUE, kFillModeSolid);
+			Novice::DrawEllipse((int)p2.x, (int)p2.y, 3, 3, 0.0f, GREEN, kFillModeSolid);
+			Novice::DrawLine((int)p0.x, (int)p0.y, (int)p1.x, (int)p1.y, BLACK);
+			Novice::DrawLine((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y, BLACK);
+			Novice::DrawLine((int)p2.x, (int)p2.y, (int)p0.x, (int)p0.y, BLACK);
+			outDepth = 0.0f;
+			outNormal = { 0.0f, 0.0f};
+			break; // 衝突が確定したのでEPAへ
+		}
+	}
+
+	//EPA(simplex, shapeA, shapeB, outNormal, outDepth);
+	return true;
+}
+
 bool GJK(const std::vector<Vector2>& meshA, const std::vector<Vector2>& meshB, Vector2& penetrationVector)
 {
 	Vector2 direction(1, 0); // 初期の探索方向（X軸方向）
@@ -350,21 +393,53 @@ bool GJK(const std::vector<Vector2>& meshA, const std::vector<Vector2>& meshB, V
 
 		// Simplex 処理（原点を含むかチェックし、Simplex を更新）
 		if (ContainsOrigin(simplex, direction)) {
-			penetrationVector = EPA(meshA, meshB, simplex);
+			penetrationVector = {0.0f, 0.0f}/*EPA(meshA, meshB, simplex)*/;
+
+			Edge closestEdge;
+			Vector2 f;
+			closestEdge.distance = FLT_MAX;
+
+			for (size_t index = 0; index < simplex.size(); index++) {
+				Vector2 p0 = simplex[index];
+				int num = int((index + 1) % simplex.size());
+				Vector2 p1 = simplex[num];
+
+				Vector2 p0p1 = p1 - p0;
+				Vector2 d = -p0;
+				float t = Dot(d, p0p1.normalize()) / p0p1.length();
+				f = p0 * (1 - t) + p1 * t;
+
+				Vector2 normal = -f.normalize();
+
+				float distance = f.length();
+
+				if (distance < closestEdge.distance) {
+					closestEdge = { p0, p1, distance, normal };
+				}
+			}
+
+			Vector2 a0, b0, c0;
+			Vector2 v;
+			a0 = closestEdge.a + origin;
+			b0 = closestEdge.b + origin;
+			c0 = f + origin;
+			//v = origin + f + closestEdge.normal * 100.0f;
+			Novice::DrawLine((int)a0.x, (int)a0.y, (int)b0.x, (int)b0.y, WHITE);
+			Novice::DrawEllipse((int)c0.x, (int)c0.y, 3, 3, 0.0f, BLACK, kFillModeSolid);
+			Novice::DrawLine((int)c0.x, (int)c0.y, (int)origin.x, (int)origin.y, 0x00FFFFFF);
 
 			Vector2 p0, p1, p2;
 			p0 = Add(simplex[0], origin);
 			p1 = Add(simplex[1], origin);
 			p2 = Add(simplex[2], origin);
 
-			Novice::DrawEllipse((int)p0.x, (int)p0.y, 3, 3, 0.0f, BLACK, kFillModeSolid);
-			Novice::DrawEllipse((int)p1.x, (int)p1.y, 3, 3, 0.0f, BLACK, kFillModeSolid);
-			Novice::DrawEllipse((int)p2.x, (int)p2.y, 3, 3, 0.0f, BLACK, kFillModeSolid);
+			Novice::DrawEllipse((int)p0.x, (int)p0.y, 3, 3, 0.0f, RED, kFillModeSolid);
+			Novice::DrawEllipse((int)p1.x, (int)p1.y, 3, 3, 0.0f, BLUE, kFillModeSolid);
+			Novice::DrawEllipse((int)p2.x, (int)p2.y, 3, 3, 0.0f, GREEN, kFillModeSolid);
 			Novice::DrawLine((int)p0.x, (int)p0.y, (int)p1.x, (int)p1.y, BLACK);
 			Novice::DrawLine((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y, BLACK);
 			Novice::DrawLine((int)p2.x, (int)p2.y, (int)p0.x, (int)p0.y, BLACK);
 
-			Vector2 v;
 			v = Add(origin, penetrationVector.normalize() * 10.0f);
 			Novice::DrawLine((int)origin.x, (int)origin.y, (int)v.x, (int)v.y, WHITE);
 
@@ -541,46 +616,68 @@ bool ContainsOrigin(std::vector<Vector2>& simplex, Vector2& direction)
 	return false;
 }
 
-Vector2 EPA(const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, std::vector<Vector2>& simplex)
+void EPA(std::vector<Vector2>& simplex, const std::vector<Vector2>& shapeA, const std::vector<Vector2>& shapeB, Vector2& outNormal, float& outDepth)
 {
-	struct Edge {
-		Vector2 a, b;
-		float distance;
+	struct Face {
+		Vector2 a, b, c;
 		Vector2 normal;
+		float distance;
 	};
 
-	std::vector<Edge> edges;
+	std::vector<Face> polytope;
+
+	// 初期ポリトープの構築
+	polytope.push_back({ simplex[0], simplex[1], simplex[2], Vector2(), 0.0f });
 
 	while (true) {
-		// 最も原点に近い辺を探す
-		Edge closestEdge;
-		closestEdge.distance = FLT_MAX;
+		// 最も原点に近い面を見つける
+		int closestFaceIdx = -1;
+		float minDistance = FLT_MAX;
 
-		for (size_t i = 0; i < simplex.size(); i++) {
-			Vector2 a = simplex[i];
-			Vector2 b = simplex[(i + 1) % simplex.size()];
+		for (size_t i = 0; i < polytope.size(); ++i) {
+			Face& f = polytope[i];
+			Vector2 edge1 = f.b - f.a;
+			Vector2 edge2 = f.c - f.a;
+			f.normal = Vector2(-edge1.y, edge1.x).normalize();
+			f.distance = f.normal.dot(f.a);
 
-			Vector2 edge = b - a;
-			Vector2 normal(-edge.y, edge.x);
-			normal = normal.normalize();
-
-			float distance = normal.dot(a);
-
-			if (distance < closestEdge.distance) {
-				closestEdge = { a, b, distance, normal };
+			if (f.distance < minDistance) {
+				minDistance = f.distance;
+				closestFaceIdx = int(i);
 			}
 		}
 
-		// 最も原点に近い方向へ Minkowski Support
-		Vector2 newPoint = MinkowskiSupport(shapeA, shapeB, closestEdge.normal);
-		// 収束判定
-		float newDist = closestEdge.normal.dot(newPoint);
-		if (std::abs(newDist - closestEdge.distance) < 0.0001f) {
-			return closestEdge.normal * closestEdge.distance; // 衝突解決ベクトル
+		// 新しいサポート点を取得
+		Face& closestFace = polytope[closestFaceIdx];
+		Vector2 newPoint = Support(shapeA, shapeB, closestFace.normal);
+		float newDistance = closestFace.normal.dot(newPoint);
+
+		// 収束判定: 新しい点がほぼ同じ位置なら終了
+		if (std::abs(newDistance - minDistance) < 0.001f) {
+			outNormal = closestFace.normal;
+			outDepth = newDistance;
+			return;
 		}
 
-		// ポリトープに新しい点を追加
-		simplex.push_back(newPoint);
+		// 新しい点を使ってポリトープを拡張
+		std::vector<Edge> edges;
+		for (size_t i = 0; i < polytope.size(); ++i) {
+			Face& f = polytope[i];
+			if (f.normal.dot(newPoint - f.a) > 0) {
+				edges.push_back({ f.a, f.b });
+				edges.push_back({ f.b, f.c });
+				edges.push_back({ f.c, f.a });
+				polytope.erase(polytope.begin() + i);
+				--i;
+			}
+		}
+
+		// 新しい面を追加
+		for (size_t i = 0; i < edges.size(); ++i) {
+			polytope.push_back({ edges[i].a, edges[i].b, newPoint, Vector2(), 0.0f });
+		}
 	}
 }
+
+
 

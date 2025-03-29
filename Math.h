@@ -10,6 +10,7 @@ struct Vector2 {
 	Vector2 operator+(const Vector2& v) const { return { x + v.x, y + v.y }; }
 	Vector2 operator-(const Vector2& v) const { return { x - v.x, y - v.y }; }
 	Vector2 operator*(float s) const { return { x * s, y * s }; }
+	bool operator==(const Vector2& other) const { return (x == other.x) && (y == other.y); }
 
 	float dot(const Vector2& v) const { return x * v.x + y * v.y; }
 	float lengthSq() const { return x * x + y * y; }
@@ -105,3 +106,8 @@ struct Face{
 	float distance;
 };
 
+struct Edge {
+	Vector2 a, b;
+	float distance;
+	Vector2 normal;
+};
